@@ -17,6 +17,11 @@
  *  limitations under the License.
  */
 
+/*
+ * Taken from the in_tcp plugin and modified to add unix domain socket
+ * support by Corey Minyard <minyard@mvista.com>.
+ */
+
 #include <fluent-bit/flb_input_plugin.h>
 #include <fluent-bit/flb_utils.h>
 #include <fluent-bit/flb_unescape.h>

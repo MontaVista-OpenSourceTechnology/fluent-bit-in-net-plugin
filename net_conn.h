@@ -17,6 +17,11 @@
  *  limitations under the License.
  */
 
+/*
+ * Taken from the in_tcp plugin and modified to add unix domain socket
+ * support by Corey Minyard <minyard@mvista.com>.
+ */
+
 #ifndef FLB_IN_NET_CONN_H
 #define FLB_IN_NET_CONN_H
 
