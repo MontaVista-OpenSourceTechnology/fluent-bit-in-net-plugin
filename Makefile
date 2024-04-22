@@ -18,4 +18,4 @@ net_config.o: net_config.c net.h net_conn.h net_config.h
 net_conn.o: net_conn.c net_conn.h
 
 clean:
-	rm -f flb-in_new.so $(OBJS)
+	rm -f flb-in_net.so $(OBJS)
