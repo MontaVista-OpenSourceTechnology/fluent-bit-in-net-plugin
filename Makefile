@@ -3,6 +3,8 @@ CC = cc
 
 CCLD = $(CC)
 
+LDFLAGS = 
+
 INCLUDES = -I/usr/local/include/fluent-bit -I/usr/local/include/fluent-bit/monkey
 
 DEFINES = -fPIC
@@ -13,7 +15,7 @@ OBJS = net.o net_config.o net_conn.o
 	$(CC) $(INCLUDES) $(DEFINES) -D__FILENAME__="\"$(PWD)/$<\"" -c $<
 
 flb-in_net.so: $(OBJS)
-	$(CCLD) -shared -o $@ $^
+	$(CCLD) -shared $(LDFLAGS) -o $@ $^
 
 net.o: net.c net.h net_conn.h net_config.h
 
