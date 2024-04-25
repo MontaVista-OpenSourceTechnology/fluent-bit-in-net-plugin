@@ -1,4 +1,6 @@
 
+CC = cc
+
 INCLUDES = -I/usr/local/include/fluent-bit -I/usr/local/include/fluent-bit/monkey
 
 DEFINES = -fPIC
@@ -6,10 +8,10 @@ DEFINES = -fPIC
 OBJS = net.o net_config.o net_conn.o
 
 %.o: %.c
-	gcc $(INCLUDES) $(DEFINES) -D__FILENAME__="\"$(PWD)/$<\"" -c $<
+	$(CC) $(INCLUDES) $(DEFINES) -D__FILENAME__="\"$(PWD)/$<\"" -c $<
 
 flb-in_net.so: $(OBJS)
-	gcc -shared -o $@ $^
+	$(CC) -shared -o $@ $^
 
 net.o: net.c net.h net_conn.h net_config.h
 
