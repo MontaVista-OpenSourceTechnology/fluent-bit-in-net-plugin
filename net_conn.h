@@ -2,7 +2,7 @@
 
 /*  Fluent Bit
  *  ==========
- *  Copyright (C) 2015-2022 The Fluent Bit Authors
+ *  Copyright (C) 2015-2024 The Fluent Bit Authors
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,10 +22,16 @@
  * support by Corey Minyard <minyard@mvista.com>.
  */
 
+/*
+ * Modified unix domain socket syntex and other function as per Fluent-bit version 3.0
+ * Modified by Hitendra Prajapati <hprajapati@mvista.com>.
+ */
+
 #ifndef FLB_IN_NET_CONN_H
 #define FLB_IN_NET_CONN_H
 
 #include <fluent-bit/flb_pack.h>
+#include <fluent-bit/flb_connection.h>
 
 #define FLB_IN_NET_CHUNK "32768"
 
@@ -41,8 +47,6 @@ struct net_conn_stream {
 
 /* Respresents a connection */
 struct net_conn {
-    struct mk_event event;            /* Built-in event data for mk_events */
-    int fd;                           /* Socket file descriptor            */
     int status;                       /* Connection status                 */
 
     /* Buffer */
@@ -54,11 +58,12 @@ struct net_conn {
     struct flb_input_instance *ins;   /* Parent plugin instance            */
     struct flb_in_net_config *ctx;    /* Plugin configuration context      */
     struct flb_pack_state pack_state; /* Internal JSON parser              */
+    struct flb_connection *connection;
 
     struct mk_list _head;
 };
 
-struct net_conn *net_conn_add(int fd, struct flb_in_net_config *ctx);
+struct net_conn *net_conn_add(struct flb_connection *connection, struct flb_in_net_config *ctx);
 int net_conn_del(struct net_conn *conn);
 
 #endif

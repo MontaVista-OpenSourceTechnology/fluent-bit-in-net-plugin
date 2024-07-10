@@ -2,7 +2,7 @@
 
 /*  Fluent Bit
  *  ==========
- *  Copyright (C) 2015-2022 The Fluent Bit Authors
+ *  Copyright (C) 2015-2024 The Fluent Bit Authors
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,7 +22,17 @@
  * support by Corey Minyard <minyard@mvista.com>.
  */
 
+/*
+ * Modified unix domain socket syntex and other function as per Fluent-bit version 3.0
+ * Modified by Hitendra Prajapati <hprajapati@mvista.com>.
+ */
+
 #include <fluent-bit/flb_input_plugin.h>
+#include <fluent-bit/flb_kv.h>
+#include <fluent-bit/flb_input.h>
+#include <fluent-bit/flb_engine.h>
+#include <fluent-bit/flb_downstream.h>
+#include <fluent-bit/flb_utils.h>
 #include <fluent-bit/flb_network.h>
 #include <msgpack.h>
 
@@ -42,123 +52,197 @@
 static int in_net_collect(struct flb_input_instance *in,
                           struct flb_config *config, void *in_context)
 {
-    int fd;
-    struct flb_in_net_config *ctx = in_context;
-    struct net_conn *conn;
+    struct flb_connection    *connection;
+    struct net_conn          *conn;
+    struct flb_in_net_config *ctx;
 
-    /* Accept the new connection */
-    fd = flb_net_accept(ctx->server_fd);
-    if (fd == -1) {
+    ctx = in_context;
+
+    connection = flb_downstream_conn_get(ctx->downstream);
+
+    if (connection == NULL) {
         flb_plg_error(ctx->ins, "could not accept new connection");
+
+        return -1;
+	}
+
+    flb_plg_info(ctx->ins, "new NET connection arrived FD=%i", connection->fd);
+
+    conn = net_conn_add(connection, ctx);
+
+    if (conn == NULL) {
+        flb_plg_error(ctx->ins, "could not accept new connection");
+
+        flb_downstream_conn_release(connection);
+
         return -1;
     }
 
-    flb_plg_trace(ctx->ins, "new NET connection arrived FD=%i", fd);
-    conn = net_conn_add(fd, ctx);
-    if (!conn) {
+	return 0;
+}
+
+static int remove_existing_socket_file(char *socket_path)
+{
+    struct stat file_data;
+    int         result;
+
+    result = stat(socket_path, &file_data);
+
+    if (result == -1) {
+        if (errno == ENOENT) {
+            return 0;
+        }
+
+        flb_errno();
+
         return -1;
     }
+
+    if (S_ISSOCK(file_data.st_mode) == 0) {
+        return -2;
+    }
+
+    result = unlink(socket_path);
+
+    if (result != 0) {
+        return -3;
+    }
+
     return 0;
 }
 
 static int net_unix_create(struct flb_in_net_config *ctx)
 {
-    flb_sockfd_t fd = -1;
-    unsigned long len;
-    size_t address_length;
-    struct sockaddr_un address;
+    int ret;
 
-    fd = flb_net_socket_create(AF_UNIX, FLB_TRUE);
-    if (fd == -1) {
+    ret = remove_existing_socket_file(ctx->unix_path);
+
+    if (ret != 0) {
+        if (ret == -2) {
+            flb_plg_error(ctx->ins,
+                          "%s exists and it is not a unix socket. Aborting",
+                          ctx->unix_path);
+        }
+        else {
+            flb_plg_error(ctx->ins,
+                          "could not remove existing unix socket %s. Aborting",
+                          ctx->unix_path);
+        }
+
         return -1;
     }
 
-    ctx->server_fd = fd;
+    ctx->downstream = flb_downstream_create(FLB_TRANSPORT_UNIX_STREAM,
+                                            ctx->ins->flags,
+                                            ctx->unix_path,
+                                            0,
+                                            ctx->ins->tls,
+                                            ctx->ins->config,
+                                            &ctx->ins->net_setup);
 
-    /* Prepare the unix socket path */
-    unlink(ctx->unix_path);
-    len = strlen(ctx->unix_path);
-
-    address.sun_family = AF_UNIX;
-    sprintf(address.sun_path, "%s", ctx->unix_path);
-    address_length = sizeof(address.sun_family) + len + 1;
-    if (bind(fd, (struct sockaddr *) &address, address_length) != 0) {
-        flb_errno();
-        close(fd);
+    if (ctx->downstream == NULL) {
         return -1;
     }
 
     if (ctx->unix_perm_str) {
-        if (chmod(address.sun_path, ctx->unix_perm)) {
+        if (chmod(ctx->unix_path, ctx->unix_perm)) {
             flb_errno();
+
             flb_plg_error(ctx->ins, "cannot set permission on '%s' to %04o",
-                      address.sun_path, ctx->unix_perm);
-            close(fd);
+                          ctx->unix_path, ctx->unix_perm);
+
             return -1;
         }
     }
 
-    if (listen(fd, 5) != 0) {
-        flb_errno();
-        flb_plg_error(ctx->ins, "cannot set listen on '%s'", address.sun_path);
-        close(fd);
-        return -1;
-    }
     return 0;
 }
 
 /* Initialize plugin */
-static int in_net_init(struct flb_input_instance *in,
+static int in_net_init(struct flb_input_instance *ins,
                       struct flb_config *config, void *data)
 {
-    int ret;
+    unsigned short int       port;
+    int                      ret;
     struct flb_in_net_config *ctx;
+
     (void) data;
 
     /* Allocate space for the configuration */
-    ctx = net_config_init(in);
+    ctx = net_config_init(ins);
     if (!ctx) {
         return -1;
     }
-    ctx->ins = in;
+
+    ctx->collector_id = -1;
+    ctx->ins = ins;
     mk_list_init(&ctx->connections);
 
     /* Set the context */
-    flb_input_set_context(in, ctx);
+    flb_input_set_context(ins, ctx);
 
     /* Create NET server */
     if (ctx->unix_path) {
-        if (net_unix_create(ctx) < 0) {
+        ret = net_unix_create(ctx);
+        if (ret != 0) {
+            flb_plg_error(ctx->ins, "could not listen on unix://%s",
+                          ctx->unix_path);
             net_config_destroy(ctx);
             return -1;
         }
-    } else {
-        ctx->server_fd = flb_net_server(ctx->tcp_port, ctx->listen);
-        if (ctx->server_fd > 0) {
+        flb_plg_info(ctx->ins, "listening on unix://%s", ctx->unix_path);
+    }
+    else {
+        port = (unsigned short int) strtoul(ctx->tcp_port, NULL, 10);
+
+        ctx->downstream = flb_downstream_create(FLB_TRANSPORT_TCP,
+                                                ctx->ins->flags,
+                                                ctx->listen,
+                                                port,
+                                                ctx->ins->tls,
+                                                config,
+                                                &ctx->ins->net_setup);
+
+        if (ctx->downstream == NULL) {
+            flb_plg_error(ctx->ins,
+                          "could not initialize downstream on unix://%s. Aborting",
+                          ctx->listen);
+
+            net_config_destroy(ctx);
+
+            return -1;
+        }
+
+        if (ctx->downstream != NULL) {
             flb_plg_info(ctx->ins, "listening on %s:%s",
                          ctx->listen, ctx->tcp_port);
         }
         else {
             flb_plg_error(ctx->ins, "could not bind address %s:%s. Aborting",
                           ctx->listen, ctx->tcp_port);
+
             net_config_destroy(ctx);
+
             return -1;
         }
     }
-    flb_net_socket_nonblocking(ctx->server_fd);
 
-    ctx->evl = config->evl;
+    flb_input_downstream_set(ctx->downstream, ctx->ins);
+
+    flb_net_socket_nonblocking(ctx->downstream->server_fd);
 
     /* Collect upon data available on the standard input */
-    ret = flb_input_set_collector_socket(in,
+    ret = flb_input_set_collector_socket(ins,
                                          in_net_collect,
-                                         ctx->server_fd,
+                                         ctx->downstream->server_fd,
                                          config);
     if (ret == -1) {
         flb_plg_error(ctx->ins, "Could not set collector for IN_NET input plugin");
         net_config_destroy(ctx);
         return -1;
     }
+
+    ctx->collector_id = ret;
 
     return 0;
 }
@@ -167,9 +251,12 @@ static int in_net_exit(void *data, struct flb_config *config)
 {
     struct mk_list *tmp;
     struct mk_list *head;
-    (void) *config;
-    struct flb_in_net_config *ctx = data;
+    struct flb_in_net_config *ctx;
     struct net_conn *conn;
+
+	(void) *config;
+
+    ctx = data;
 
     mk_list_foreach_safe(head, tmp, &ctx->connections) {
         conn = mk_list_entry(head, struct net_conn, _head);
@@ -211,6 +298,11 @@ static struct flb_config_map config_map[] = {
       0, FLB_TRUE, offsetof(struct flb_in_net_config, buffer_size_str),
       "Set the buffer size"
     },
+    {
+      FLB_CONFIG_MAP_STR, "source_address_key", (char *) NULL,
+      0, FLB_TRUE, offsetof(struct flb_in_net_config, source_address_key),
+      "Key where the source address will be injected"
+    },
     /* EOF */
     {0}
 };
@@ -225,5 +317,5 @@ struct flb_input_plugin in_net_plugin = {
     .cb_flush_buf = NULL,
     .cb_exit      = in_net_exit,
     .config_map   = config_map,
-    .flags        = FLB_INPUT_NET,
+    .flags        = FLB_INPUT_NET_SERVER | FLB_IO_OPT_TLS
 };

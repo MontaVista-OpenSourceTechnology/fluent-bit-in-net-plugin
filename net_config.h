@@ -2,7 +2,7 @@
 
 /*  Fluent Bit
  *  ==========
- *  Copyright (C) 2015-2022 The Fluent Bit Authors
+ *  Copyright (C) 2015-2024 The Fluent Bit Authors
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -20,6 +20,11 @@
 /*
  * Taken from the in_tcp plugin and modified to add unix domain socket
  * support by Corey Minyard <minyard@mvista.com>.
+ */
+
+/*
+ * Modified unix domain socket syntex and other function as per Fluent-bit version 3.0
+ * Modified by Hitendra Prajapati <hprajapati@mvista.com>.
  */
 
 #ifndef FLB_IN_NET_CONFIG_H
